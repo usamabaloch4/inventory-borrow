@@ -98,19 +98,40 @@ function handleUpgrade(request, socket, head) {
 httpServer.on('upgrade', handleUpgrade);
 if (httpsServer) httpsServer.on('upgrade', handleUpgrade);
 
-// Helper to get local LAN IP addresses
-function getLocalIPs() {
+// Helper to get local LAN IP addresses with intelligent priority sorting
+function getLocalNetworkInterfaces() {
   const interfaces = os.networkInterfaces();
-  const ips = [];
+  const list = [];
+  
   for (const name of Object.keys(interfaces)) {
+    const isVirtual = /vethernet|virtual|vbox|vmware|docker|tailscale|loopback|wsl|hyper-v|bluetooth|tap|tun/i.test(name);
     for (const iface of interfaces[name]) {
-      // Skip internal (localhost) and non-IPv4
-      if (!iface.internal && iface.family === 'IPv4') {
-        ips.push(iface.address);
+      if (!iface.internal && iface.family === 'IPv4' && !iface.address.startsWith('169.254.')) {
+        list.push({
+          name,
+          address: iface.address,
+          isVirtual,
+          isWiFi: /wi-?fi|wireless|wlan|airport/i.test(name),
+          isEthernet: /ethernet|eth|en/i.test(name)
+        });
       }
     }
   }
-  return ips;
+
+  // Sort priority: Physical Wi-Fi -> Physical Ethernet -> other physical -> virtual adapters
+  list.sort((a, b) => {
+    if (a.isVirtual !== b.isVirtual) return a.isVirtual ? 1 : -1;
+    if (a.isWiFi !== b.isWiFi) return a.isWiFi ? -1 : 1;
+    if (a.isEthernet !== b.isEthernet) return a.isEthernet ? -1 : 1;
+    return 0;
+  });
+
+  return list;
+}
+
+function getLocalIPs() {
+  const ifaces = getLocalNetworkInterfaces();
+  return ifaces.map(i => i.address);
 }
 
 // --- API ROUTES ---
@@ -118,17 +139,20 @@ function getLocalIPs() {
 // Network info & QR code for mobile pairing (points directly to /camera)
 app.get('/api/network-info', async (req, res) => {
   try {
-    const ips = getLocalIPs();
-    const primaryIp = ips[0] || '127.0.0.1';
-    const httpsUrl = `https://${primaryIp}:${HTTPS_PORT}/camera`;
-    const httpUrl = `http://${primaryIp}:${HTTP_PORT}/camera`;
+    const ifaces = getLocalNetworkInterfaces();
+    const ips = ifaces.map(i => i.address);
+    const selectedIp = req.query.ip || (ifaces.length > 0 ? ifaces[0].address : '127.0.0.1');
+
+    const httpsUrl = `https://${selectedIp}:${HTTPS_PORT}/camera`;
+    const httpUrl = `http://${selectedIp}:${HTTP_PORT}/camera`;
 
     // Generate QR code for HTTPS pairing
     const qrDataUrl = await qrcode.toDataURL(httpsUrl, { width: 320, margin: 2 });
 
     res.json({
-      primaryIp,
+      primaryIp: selectedIp,
       ips,
+      interfaces: ifaces,
       httpPort: HTTP_PORT,
       httpsPort: HTTPS_PORT,
       httpsUrl,

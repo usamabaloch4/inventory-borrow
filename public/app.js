@@ -1094,15 +1094,34 @@
   }
 
   // 1. Connect Phone Modal Setup
-  async function openConnectPhoneModal() {
+  async function openConnectPhoneModal(selectedIp = '') {
     try {
-      const info = await api('/api/network-info');
+      const url = selectedIp ? `/api/network-info?ip=${encodeURIComponent(selectedIp)}` : '/api/network-info';
+      const info = await api(url);
       state.networkInfo = info;
 
       document.getElementById('pairingQrImg').src = info.qrDataUrl;
       const link = document.getElementById('mobileHttpsLink');
       link.href = info.httpsUrl;
       link.textContent = info.httpsUrl;
+
+      const adapterWrap = document.getElementById('adapterSelectWrapper');
+      const adapterSelect = document.getElementById('networkAdapterSelect');
+
+      if (info.interfaces && info.interfaces.length > 1 && adapterWrap && adapterSelect) {
+        adapterWrap.style.display = 'block';
+        adapterSelect.innerHTML = info.interfaces.map(iface => {
+          const type = iface.isWiFi ? '📶 Wi-Fi' : (iface.isEthernet ? '🔌 Ethernet' : (iface.isVirtual ? '⚙️ Virtual' : '🌐 LAN'));
+          const selected = iface.address === info.primaryIp ? 'selected' : '';
+          return `<option value="${iface.address}" ${selected}>${type}: ${iface.address} (${iface.name})</option>`;
+        }).join('');
+
+        adapterSelect.onchange = (e) => {
+          openConnectPhoneModal(e.target.value);
+        };
+      } else if (adapterWrap) {
+        adapterWrap.style.display = 'none';
+      }
 
       openModal('modalConnectPhone');
     } catch (err) {
