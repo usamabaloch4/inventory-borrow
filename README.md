@@ -11,8 +11,10 @@ An offline-first, high-precision inventory tracking and gear checkout portal des
 2. It automatically installs dependencies (first time only) and opens `http://localhost:3000` in your default browser.
 
 ### macOS (One-Click)
-1. Double-click [`start_geartrack.command`](./start_geartrack.command).
-2. It starts the server and opens `http://localhost:3000`.
+1. **First-time launch on a new Mac**:
+   - In Finder, **Right-Click (or Control + Click)** on [`start_geartrack.command`](./start_geartrack.command) &rarr; choose **Open** &rarr; click **Open**.
+   - *(Alternatively, in Terminal run: `xattr -d com.apple.quarantine start_geartrack.command`)*
+2. After the first time, simply double-click [`start_geartrack.command`](./start_geartrack.command) anytime to start the server and launch the app in your browser.
 
 ### Manual Start (Any OS)
 ```bash
