@@ -321,7 +321,8 @@ let sharp = null;
 try {
   sharp = require('sharp');
 } catch (e) {
-  console.warn('sharp optional module not loaded:', e.message);
+  // Optional image pre-enhancement library; zxing-wasm decodes directly without it
+  sharp = null;
 }
 
 // Deep Image Barcode / MicroQR / DataMatrix Decoder Endpoint
