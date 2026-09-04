@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>GearTrack — Equipment & Crew Asset Management</title>
+  <meta name="description" content="Studio equipment and crew tracking system with barcode and QR scanning.">
+  <link rel="stylesheet" href="styles.css?v=5">
+  
+  <!-- Offline Libraries -->
+  <script src="libs/JsBarcode.all.min.js"></script>
+  <script src="libs/qrcode.min.js"></script>
+  <script src="libs/bwip-js.min.js"></script>
+  <script src="libs/zxing-wasm/index.js?v=5"></script>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="top-header">
+    <div class="top-header-inner">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+        </div>
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span class="brand-title">GearTrack</span>
+            <span class="brand-badge">Local Offline</span>
+          </div>
+          <div style="font-size: 0.72rem; color: var(--text-muted);">Studio Production & Equipment Inventory</div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="sync-status" id="syncStatus">
+          <span class="sync-dot" id="syncDot"></span>
+          <span id="syncText">Live Sync Active</span>
+        </div>
+
+        <button class="btn btn-phone" id="btnConnectPhone" title="Pair mobile companion camera">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          <span>Connect Phone</span>
+        </button>
+
+        <button class="btn btn-primary" id="btnQuickRegister" title="Register new equipment or photographer">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <span>Register New</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="nav-tabs">
+    <div class="nav-tabs-inner">
+      <button class="tab-btn active" data-tab="scan">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+        <span>Scan Station</span>
+      </button>
+      <button class="tab-btn" data-tab="gear">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        <span>Gear Inventory</span>
+        <span class="badge" id="badgeGearCount">0</span>
+      </button>
+      <button class="tab-btn" data-tab="photographers">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>Crew & Photographers</span>
+        <span class="badge" id="badgePhotoCount">0</span>
+      </button>
+      <button class="tab-btn" data-tab="history">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>Audit Log</span>
+      </button>
+      <button class="tab-btn" data-tab="labels">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        <span>Label Studio</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-content">
+    
+    <!-- Quick Stats Bar -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon blue">
+          <svg class="icon icon-lg" viewBox="0 0 24 24"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-label">Total Inventory</span>
+          <span class="stat-val" id="statTotalGear">0</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon green">
+          <svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-label">Available In Studio</span>
+          <span class="stat-val" id="statAvailableGear" style="color: #34d399;">0</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon amber">
+          <svg class="icon icon-lg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-label">Checked Out</span>
+          <span class="stat-val" id="statInUseGear" style="color: #fbbf24;">0</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon purple">
+          <svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <div class="stat-info">
+          <span class="stat-label">Active Crew</span>
+          <span class="stat-val" id="statActivePhotographers">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 1: SCAN STATION -->
+    <section class="tab-content" id="tab-scan">
+      <div class="scan-layout">
+        
+        <!-- Left: Live Camera Viewfinder -->
+        <div class="scanner-panel">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem;">
+              <svg class="icon icon-sm" style="color: var(--accent-blue);" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+              <span>Live Camera Scanner</span>
+            </h3>
+            <span class="badge" id="cameraStatusBadge" style="background: rgba(16, 185, 129, 0.12); color: #34d399; font-size: 0.72rem;">Camera Active</span>
+          </div>
+
+          <!-- Scanner Mode Selector -->
+          <div class="scanner-mode-selector">
+            <button class="mode-btn active" data-mode="smart">Smart Scan</button>
+            <button class="mode-btn" data-mode="checkout">Check Out</button>
+            <button class="mode-btn" data-mode="return">Check In</button>
+            <button class="mode-btn" data-mode="register">Register</button>
+          </div>
+
+          <!-- Viewfinder Frame -->
+          <div class="viewfinder-container">
+            <div id="reader"></div>
+            <div class="scanner-overlay-laser"></div>
+            <div class="scanner-reticle"></div>
+          </div>
+
+          <!-- Camera Controls & Switcher -->
+          <div class="scanner-controls">
+            <div style="display: flex; gap: 0.4rem; align-items: center; flex: 1; flex-wrap: wrap;">
+              <select id="cameraSelect" class="select-input" style="flex: 1; min-width: 140px; font-size: 0.8rem;">
+                <option value="">Detecting cameras...</option>
+              </select>
+              <button class="btn btn-sm" id="btnToggleCamera" title="Start/Stop Camera">
+                <span id="cameraToggleIcon">
+                  <svg class="icon icon-xs" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                </span>
+                <span>Pause</span>
+              </button>
+              <button class="btn btn-sm" id="btnZoomToggle" title="Digital Zoom / Macro">
+                <svg class="icon icon-xs" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                <span>2x Zoom</span>
+              </button>
+              <button class="btn btn-sm btn-phone" id="btnSnapHighRes" title="Snap high-resolution frame">
+                <svg class="icon icon-xs" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                <span>Snap Frame</span>
+              </button>
+              <label class="btn btn-sm" style="cursor: pointer;" title="Upload photo file">
+                <svg class="icon icon-xs" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <span>Upload</span>
+                <input type="file" id="filePhotoScanInput" accept="image/*" style="display: none;">
+              </label>
+            </div>
+          </div>
+
+          <!-- Mobile Native Camera Macro Shutter -->
+          <div style="margin-top: 0.25rem;">
+            <label class="btn btn-phone btn-lg" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 0.6rem; cursor: pointer; padding: 0.75rem 1rem; border-radius: var(--radius-md);">
+              <svg class="icon icon-md" viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+              <span style="font-weight: 600;">Take Optical Photo to Scan</span>
+              <input type="file" id="mobileCameraCaptureInput" accept="image/*" capture="environment" style="display: none;">
+            </label>
+          </div>
+
+          <!-- Manual / Barcode Gun Input Bar -->
+          <div style="margin-top: 0.25rem;">
+            <label class="form-label" style="margin-bottom: 0.3rem; display: block;">Manual Barcode Entry / USB Scanner:</label>
+            <form id="manualScanForm" class="manual-input-bar">
+              <input type="text" id="manualCodeInput" class="form-input form-input-mono" placeholder="Scan or enter code value..." autocomplete="off">
+              <button type="submit" class="btn btn-primary">Process</button>
+            </form>
+          </div>
+
+          <div style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 0.6rem; border-radius: var(--radius-sm); display: flex; align-items: flex-start; gap: 0.4rem;">
+            <svg class="icon icon-xs" style="color: var(--accent-blue); margin-top: 0.15rem;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <div><strong>Tip:</strong> Scan a crew badge to initiate a checkout session, or scan equipment to inspect, return, or register.</div>
+          </div>
+        </div>
+
+        <!-- Right: Active Session & Cart Panel -->
+        <div class="session-panel">
+          <div class="session-header">
+            <div>
+              <h3 style="font-size: 1rem; font-weight: 600;" id="sessionTitle">Current Session</h3>
+              <p style="font-size: 0.78rem; color: var(--text-muted);" id="sessionSubtitle">Scan a crew member ID badge or select below</p>
+            </div>
+            <button class="btn btn-sm btn-danger" id="btnClearSession" style="display: none;">Clear</button>
+          </div>
+
+          <!-- Selected Photographer Box -->
+          <div id="selectedPhotographerContainer">
+            <div style="text-align: center; padding: 1.75rem 1rem; border: 1px dashed var(--border-color); border-radius: var(--radius-md); color: var(--text-muted);">
+              <div style="margin-bottom: 0.5rem; color: var(--text-sub);">
+                <svg class="icon icon-xl" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+              </div>
+              <div style="font-weight: 600; color: var(--text-main); margin-bottom: 0.25rem;">No Crew Member Selected</div>
+              <div style="font-size: 0.8rem; margin-bottom: 0.75rem;">Scan badge barcode or select from directory:</div>
+              <select id="quickSelectPhotographer" class="select-input" style="max-width: 260px; width: 100%;">
+                <option value="">-- Choose Photographer --</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Scanned Items for Checkout Basket -->
+          <div style="display: flex; flex-direction: column; gap: 0.5rem; flex: 1;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span class="form-label">Gear Basket (<span id="basketCount">0</span> items)</span>
+              <button class="btn btn-sm" id="btnClearBasket" style="font-size: 0.75rem; display: none;">Remove All</button>
+            </div>
+
+            <div class="scanned-items-list" id="basketList">
+              <div style="text-align: center; padding: 2rem 1rem; color: var(--text-sub); font-size: 0.85rem;">
+                Scan gear barcodes to add to this checkout session.
+              </div>
+            </div>
+          </div>
+
+          <!-- Checkout Action -->
+          <div style="margin-top: auto; padding-top: 1rem; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.75rem;">
+            <input type="text" id="checkoutNotesInput" class="form-input" placeholder="Optional notes (e.g. Studio shoot, Location A)...">
+            <button class="btn btn-success btn-lg" id="btnConfirmCheckout" disabled style="width: 100%;">
+              <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>Complete Checkout (<span id="btnCheckoutCount">0</span> Items)</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- TAB 2: GEAR INVENTORY -->
+    <section class="tab-content" id="tab-gear" style="display: none;">
+      <div class="filter-bar">
+        <div class="filter-group">
+          <input type="text" id="gearSearchInput" class="form-input" placeholder="Search gear name, barcode, serial, or holder..." style="min-width: 280px;">
+          <select id="gearCategoryFilter" class="select-input">
+            <option value="">All Categories</option>
+            <option value="Camera">Cameras</option>
+            <option value="Lens">Lenses</option>
+            <option value="Walkie-Talkie">Walkie-Talkies</option>
+            <option value="Lighting">Lighting</option>
+            <option value="Audio">Audio</option>
+            <option value="Accessory">Accessories</option>
+          </select>
+          <select id="gearStatusFilter" class="select-input">
+            <option value="">All Statuses</option>
+            <option value="available">Available</option>
+            <option value="checked_out">In Use (Checked Out)</option>
+            <option value="maintenance">Maintenance</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <button class="btn btn-phone" id="btnScanAddGear">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+            <span>Scan to Add</span>
+          </button>
+          <button class="btn btn-primary" id="btnAddGearModalTrigger">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>Manual Add</span>
+          </button>
+          <button class="btn" id="btnExportCSV">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span>Export CSV</span>
+          </button>
+          <button class="btn" id="btnDownloadBackup" title="Download timestamped SQLite Database backup">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            <span>Backup DB</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="data-grid" id="gearGrid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- TAB 3: PHOTOGRAPHERS DIRECTORY -->
+    <section class="tab-content" id="tab-photographers" style="display: none;">
+      <div class="filter-bar">
+        <div class="filter-group">
+          <input type="text" id="photoSearchInput" class="form-input" placeholder="Search crew name or badge ID..." style="min-width: 280px;">
+        </div>
+        <div class="filter-group">
+          <button class="btn btn-phone" id="btnScanAddPhotographer">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+            <span>Scan ID Badge</span>
+          </button>
+          <button class="btn btn-primary" id="btnAddPhotographerModalTrigger">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>Add Member</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="data-grid" id="photographersGrid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- TAB 4: ACTIVITY LOG -->
+    <section class="tab-content" id="tab-history" style="display: none;">
+      <div class="filter-bar">
+        <h3 style="font-size: 1rem; font-weight: 600;">Transaction & Checkout Audit Log</h3>
+        <button class="btn btn-sm" id="btnRefreshHistory">
+          <svg class="icon icon-xs" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          <span>Refresh</span>
+        </button>
+      </div>
+
+      <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+          <thead>
+            <tr style="border-bottom: 1px solid var(--border-color); background: rgba(0,0,0,0.25); color: var(--text-muted);">
+              <th style="padding: 0.85rem 1rem;">Timestamp</th>
+              <th style="padding: 0.85rem 1rem;">Action</th>
+              <th style="padding: 0.85rem 1rem;">Gear Item</th>
+              <th style="padding: 0.85rem 1rem;">Barcode</th>
+              <th style="padding: 0.85rem 1rem;">Crew Member</th>
+              <th style="padding: 0.85rem 1rem;">Notes</th>
+            </tr>
+          </thead>
+          <tbody id="historyTableBody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 5: LABEL STUDIO & PRINT -->
+    <section class="tab-content" id="tab-labels" style="display: none;">
+      <div class="filter-bar">
+        <div>
+          <h3 style="font-size: 1rem; font-weight: 600;">Printable Barcode & QR Labels</h3>
+          <p style="font-size: 0.8rem; color: var(--text-muted);">Generate print-ready sticky labels for cameras, lenses, walkie-talkies, and ID badges.</p>
+        </div>
+        <div class="filter-group">
+          <button class="btn btn-primary" onclick="window.print()">
+            <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            <span>Print Label Sheet</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="printable-sheet" id="printableLabelsContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem;">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ================= MODALS ================= -->
+
+  <!-- 1. Connect Phone Modal -->
+  <div class="modal-backdrop" id="modalConnectPhone">
+    <div class="modal-container" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3 style="display: flex; align-items: center; gap: 0.5rem; font-size: 1.05rem; font-weight: 600;">
+          <svg class="icon icon-md" style="color: var(--accent-blue);" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          <span>Connect Phone Camera Companion</span>
+        </h3>
+        <button class="close-btn" data-close="modalConnectPhone">&times;</button>
+      </div>
+      <div class="modal-body" style="text-align: center; gap: 1rem;">
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+          Scan this QR code with your phone camera to pair it as a high-precision scanner over local Wi-Fi:
+        </p>
+
+        <div style="background: white; padding: 1rem; border-radius: 12px; display: inline-block; margin: 0 auto; box-shadow: var(--shadow-card);">
+          <img id="pairingQrImg" src="" alt="Pairing QR Code" style="width: 220px; height: 220px; display: block;">
+        </div>
+
+        <div style="background: rgba(0,0,0,0.3); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color);">
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.2rem;">Direct Companion URL:</div>
+          <a id="mobileHttpsLink" href="#" target="_blank" style="color: #60a5fa; font-family: var(--font-mono); font-size: 0.85rem; word-break: break-all;"></a>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" data-close="modalConnectPhone">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Quick Register Scanned Code Modal -->
+  <div class="modal-backdrop" id="modalQuickRegister">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 style="display: flex; align-items: center; gap: 0.5rem; font-size: 1.05rem; font-weight: 600;">
+          <svg class="icon icon-md" style="color: var(--accent-blue);" viewBox="0 0 24 24"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          <span>Register New Item</span>
+        </h3>
+        <button class="close-btn" data-close="modalQuickRegister">&times;</button>
+      </div>
+      <form id="quickRegisterForm">
+        <div class="modal-body">
+          <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); border-radius: 8px; padding: 0.75rem; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+              <div style="font-size: 0.75rem; color: #93c5fd;">Scanned Barcode:</div>
+              <div id="quickRegCodeDisplay" style="font-family: var(--font-mono); font-weight: 700; font-size: 1.05rem; color: #ffffff;"></div>
+            </div>
+            <span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">Unregistered</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Item Type</label>
+            <div style="display: flex; gap: 0.5rem;">
+              <button type="button" class="btn btn-primary" id="btnTypeIsGear" style="flex: 1;">
+                <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                <span>Equipment / Gear</span>
+              </button>
+              <button type="button" class="btn" id="btnTypeIsPhoto" style="flex: 1;">
+                <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <span>Crew Member ID</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Subform: Gear Item -->
+          <div id="quickRegGearSection" style="display: flex; flex-direction: column; gap: 1rem;">
+            <div class="form-group">
+              <label class="form-label">Category</label>
+              <div class="category-presets" id="quickCategoryPresets">
+                <span class="preset-chip active" data-cat="Camera">Camera</span>
+                <span class="preset-chip" data-cat="Lens">Lens</span>
+                <span class="preset-chip" data-cat="Walkie-Talkie">Walkie-Talkie</span>
+                <span class="preset-chip" data-cat="Lighting">Lighting</span>
+                <span class="preset-chip" data-cat="Audio">Audio</span>
+                <span class="preset-chip" data-cat="Accessory">Accessory</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Equipment Name *</label>
+              <input type="text" id="quickRegGearName" class="form-input" placeholder="e.g. Sony A7 IV Body #3 or 24-70mm GM" required>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Serial Number</label>
+              <input type="text" id="quickRegGearSerial" class="form-input" placeholder="e.g. SN-884920">
+            </div>
+          </div>
+
+          <!-- Subform: Photographer -->
+          <div id="quickRegPhotoSection" style="display: none; flex-direction: column; gap: 1rem;">
+            <div class="form-group">
+              <label class="form-label">Full Name *</label>
+              <input type="text" id="quickRegPhotoName" class="form-input" placeholder="e.g. Jordan Miller">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Role</label>
+              <input type="text" id="quickRegPhotoRole" class="form-input" placeholder="e.g. Lead Photographer / Videographer" value="Photographer">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phone / WhatsApp</label>
+              <input type="text" id="quickRegPhotoPhone" class="form-input" placeholder="+1 555-0123">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Notes</label>
+            <input type="text" id="quickRegNotes" class="form-input" placeholder="Optional notes...">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" data-close="modalQuickRegister">Cancel</button>
+          <button type="submit" class="btn btn-success">Save to Inventory</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. Add / Edit Gear Modal -->
+  <div class="modal-backdrop" id="modalGearForm">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 id="gearModalTitle" style="font-size: 1.05rem; font-weight: 600;">Add Equipment</h3>
+        <button class="close-btn" data-close="modalGearForm">&times;</button>
+      </div>
+      <form id="gearForm">
+        <input type="hidden" id="gearFormId">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Barcode / QR Value *</label>
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" id="gearFormBarcode" class="form-input form-input-mono" placeholder="e.g. CAM-001 or scan barcode" required>
+              <button type="button" class="btn btn-phone btn-sm" id="btnScanCodeForGearForm" title="Scan with camera">Scan</button>
+              <button type="button" class="btn btn-sm" id="btnGenRandomGearBarcode" title="Generate code">Random</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Equipment Name *</label>
+            <input type="text" id="gearFormName" class="form-input" placeholder="e.g. Canon R5 Body #1" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Category *</label>
+            <select id="gearFormCategory" class="select-input" required>
+              <option value="Camera">Camera</option>
+              <option value="Lens">Lens</option>
+              <option value="Walkie-Talkie">Walkie-Talkie</option>
+              <option value="Lighting">Lighting</option>
+              <option value="Audio">Audio</option>
+              <option value="Accessory">Accessory</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Serial Number</label>
+            <input type="text" id="gearFormSerial" class="form-input" placeholder="e.g. SN-994021">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select id="gearFormStatus" class="select-input">
+              <option value="available">Available</option>
+              <option value="maintenance">Maintenance / Repair</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Notes</label>
+            <textarea id="gearFormNotes" class="form-input" rows="2" placeholder="Condition, accessories included..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" data-close="modalGearForm">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Equipment</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4. Add / Edit Photographer Modal -->
+  <div class="modal-backdrop" id="modalPhotographerForm">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 id="photoModalTitle" style="font-size: 1.05rem; font-weight: 600;">Add Crew Member</h3>
+        <button class="close-btn" data-close="modalPhotographerForm">&times;</button>
+      </div>
+      <form id="photographerForm">
+        <input type="hidden" id="photoFormId">
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">ID Badge Barcode *</label>
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" id="photoFormBarcode" class="form-input form-input-mono" placeholder="e.g. PHOTO-005 or scan ID badge" required>
+              <button type="button" class="btn btn-phone btn-sm" id="btnScanCodeForPhotoForm" title="Scan with camera">Scan</button>
+              <button type="button" class="btn btn-sm" id="btnGenRandomPhotoBarcode" title="Generate code">Random</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Full Name *</label>
+            <input type="text" id="photoFormName" class="form-input" placeholder="e.g. Maria Santos" required>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Role</label>
+            <input type="text" id="photoFormRole" class="form-input" placeholder="e.g. Lead Photographer / Videographer" value="Photographer">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Phone / WhatsApp</label>
+            <input type="text" id="photoFormPhone" class="form-input" placeholder="+1 555-0199">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input type="email" id="photoFormEmail" class="form-input" placeholder="photographer@email.com">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" data-close="modalPhotographerForm">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Member</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 5. Single Item Barcode / QR / Data Matrix Modal -->
+  <div class="modal-backdrop" id="modalSingleBarcode">
+    <div class="modal-container" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 id="singleBarcodeTitle" style="font-size: 1.05rem; font-weight: 600;">Item Label Preview</h3>
+        <button class="close-btn" data-close="modalSingleBarcode">&times;</button>
+      </div>
+      <div class="modal-body" style="text-align: center;">
+        <div style="display: flex; justify-content: center; gap: 0.3rem; margin-bottom: 0.75rem;">
+          <button type="button" class="btn btn-sm btn-primary" id="btnLabelFmt1D">1D Barcode</button>
+          <button type="button" class="btn btn-sm" id="btnLabelFmtQR">QR Code</button>
+          <button type="button" class="btn btn-sm" id="btnLabelFmtDataMatrix">Data Matrix</button>
+        </div>
+
+        <div class="label-preview-card" id="singleLabelPrintArea">
+          <div class="label-title" id="singleLabelName">Equipment Name</div>
+          <div class="label-meta" id="singleLabelCategory">Category</div>
+          
+          <div id="wrapper1DBarcode" style="margin: 0.5rem 0;">
+            <svg id="singleBarcodeSvg"></svg>
+          </div>
+          <div id="wrapperQrCode" style="display: none; justify-content: center; margin: 0.5rem auto;">
+            <div id="singleQrCanvas"></div>
+          </div>
+          <div id="wrapperDataMatrix" style="display: none; justify-content: center; margin: 0.5rem auto;">
+            <canvas id="singleDataMatrixCanvas"></canvas>
+          </div>
+          
+          <div class="label-meta" id="singleLabelSerial" style="font-family: var(--font-mono); font-weight: 700; color: #111827;"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" data-close="modalSingleBarcode">Close</button>
+        <button class="btn btn-primary" id="btnPrintSingleLabel">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          <span>Print Label</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Main Application Script -->
+  <script src="app.js?v=6"></script>
+</body>
+</html>
