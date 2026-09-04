@@ -9,13 +9,23 @@ const DB_PATH = path.join(DATA_DIR, 'geartrack.db');
 
 let db;
 try {
-  const Database = require('better-sqlite3');
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-  console.log('✓ SQLite database initialized at', DB_PATH);
-} catch (err) {
-  console.warn('better-sqlite3 native module not available, using JSON-backed store:', err.message);
-  db = null;
+  // 1. First choice: Node.js built-in SQLite engine (Node 22.5+, completely pure, no build tools/Python needed)
+  const { DatabaseSync } = require('node:sqlite');
+  db = new DatabaseSync(DB_PATH);
+  db.exec('PRAGMA journal_mode = WAL');
+  console.log('✓ SQLite database initialized (built-in node:sqlite) at', DB_PATH);
+} catch (e1) {
+  try {
+    // 2. Second choice: better-sqlite3 if installed
+    const Database = require('better-sqlite3');
+    db = new Database(DB_PATH);
+    db.pragma('journal_mode = WAL');
+    console.log('✓ SQLite database initialized (better-sqlite3) at', DB_PATH);
+  } catch (e2) {
+    // 3. Fallback: Pure JSON file storage
+    console.log('✓ JSON database store initialized at', path.join(DATA_DIR, 'geartrack.json'));
+    db = null;
+  }
 }
 
 // Initialize tables if using SQLite
