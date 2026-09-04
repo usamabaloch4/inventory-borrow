@@ -661,6 +661,11 @@
       state.photographers = photoList;
       state.history = historyList;
 
+      if (state.selectedPhotographer) {
+        state.selectedPhotographer = state.photographers.find(p => p.id === state.selectedPhotographer.id) || null;
+        renderSelectedPhotographer();
+      }
+
       renderStats(stats);
       renderGearInventory();
       renderPhotographers();
@@ -1535,17 +1540,22 @@
 
     if (!state.selectedPhotographer) {
       container.innerHTML = `
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 1.5rem 1rem; border: 2px dashed var(--border-color); border-radius: var(--radius-md); color: var(--text-muted);">
-          <div class="empty-state-icon" style="color: var(--text-muted); opacity: 0.5; margin-bottom: 0.5rem;">${Icons.badge}</div>
-          <div style="font-weight: 600; color: var(--text-main); margin-bottom: 0.25rem;">No Photographer Selected</div>
-          <div style="font-size: 0.8rem; margin-bottom: 0.75rem;">Scan an ID Card Barcode or pick from directory:</div>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0.85rem 0.75rem; border: 1px dashed var(--border-color); border-radius: var(--radius-md); color: var(--text-muted);">
+          <div style="margin-bottom: 0.25rem; color: var(--text-sub);">
+            <svg class="icon icon-lg" viewBox="0 0 24 24">
+              <rect x="2" y="5" width="20" height="14" rx="2" />
+              <line x1="2" y1="10" x2="22" y2="10" />
+            </svg>
+          </div>
+          <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-main); margin-bottom: 0.15rem;">No Crew Member Selected</div>
+          <div style="font-size: 0.75rem; margin-bottom: 0.5rem;">Scan badge barcode or select from directory:</div>
           <select id="quickSelectPhotographer" class="select-input" style="max-width: 260px; width: 100%; margin: 0 auto;">
             <option value="">-- Choose Photographer --</option>
           </select>
         </div>
       `;
       updatePhotographerDropdowns();
-      subtitle.textContent = 'Scan a Photographer ID badge or select below';
+      subtitle.textContent = 'Scan a crew member ID badge or select below';
       clearBtn.style.display = 'none';
       updateCheckoutButtonState();
       return;
@@ -1556,41 +1566,86 @@
 
     const heldGear = state.gear.filter(g => g.current_photographer_id == p.id);
     const activeCheckoutNotes = [];
+    const gearCheckoutMap = {};
     for (const g of heldGear) {
       const log = state.history.find(h => h.action === 'checkout' && h.gear_id === g.id && h.photographer_id == p.id && h.notes);
-      if (log && log.notes && !activeCheckoutNotes.includes(log.notes)) {
-        activeCheckoutNotes.push(log.notes);
+      if (log && log.notes) {
+        gearCheckoutMap[g.id] = log.notes;
+        if (!activeCheckoutNotes.includes(log.notes)) {
+          activeCheckoutNotes.push(log.notes);
+        }
       }
     }
 
     container.innerHTML = `
-      <div class="photographer-card-selected" style="flex-direction: column; align-items: stretch; gap: 0.75rem;">
+      <div class="photographer-card-selected" style="flex-direction: column; align-items: stretch; gap: 0.65rem; padding: 0.85rem;">
         <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;">
-          <div style="display: flex; align-items: center; gap: 0.75rem; min-width: 0;">
-            <div class="photo-avatar" style="flex-shrink: 0;">${initials}</div>
+          <div style="display: flex; align-items: center; gap: 0.65rem; min-width: 0;">
+            <div class="photo-avatar" style="flex-shrink: 0; width: 38px; height: 38px; font-size: 0.9rem;">${initials}</div>
             <div style="min-width: 0;">
-              <div style="font-weight: 700; color: var(--text-main); font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.name)}</div>
-              <div style="font-size: 0.78rem; color: var(--accent-blue); font-family: var(--font-mono); font-weight: 600;">${Icons.badge} ID: ${escapeHtml(p.barcode)}</div>
-              <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(p.role || 'Photographer')} ${p.phone ? `• ${Icons.phone} ${escapeHtml(p.phone)}` : ''}</div>
+              <div style="font-weight: 700; color: var(--text-main); font-size: 0.98rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.name)}</div>
+              <div style="font-size: 0.75rem; color: var(--accent-blue); font-family: var(--font-mono); font-weight: 600;">${Icons.badge} ID: ${escapeHtml(p.barcode)}</div>
+              <div style="font-size: 0.72rem; color: var(--text-muted);">${escapeHtml(p.role || 'Photographer')} ${p.phone ? `• ${Icons.phone} ${escapeHtml(p.phone)}` : ''}</div>
             </div>
           </div>
-          <button class="btn btn-sm btn-danger" onclick="window.GearTrack.clearSelectedPhotographer()" title="Switch crew member" style="flex-shrink: 0;">Change</button>
+          <button class="btn btn-sm btn-danger" onclick="window.GearTrack.clearSelectedPhotographer()" title="Switch crew member" style="flex-shrink: 0; padding: 0.3rem 0.6rem; font-size: 0.75rem;">Change</button>
         </div>
+
         ${activeCheckoutNotes.length > 0 ? `
-          <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.25rem;">
-            <div style="color: #f59e0b; font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; display: flex; align-items: center; gap: 0.35rem;">
+          <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: var(--radius-sm); padding: 0.45rem 0.65rem; font-size: 0.78rem; display: flex; flex-direction: column; gap: 0.2rem;">
+            <div style="color: #f59e0b; font-weight: 700; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; display: flex; align-items: center; gap: 0.3rem;">
               <span style="display: inline-flex;">${Icons.tag}</span>
               <span>Active Checkout Notes:</span>
             </div>
             ${activeCheckoutNotes.map(n => `<div style="color: var(--text-main); font-weight: 500; font-style: italic; word-break: break-word;">"${escapeHtml(n)}"</div>`).join('')}
           </div>
         ` : ''}
+
         ${p.notes ? `
-          <div style="background: rgba(0, 0, 0, 0.2); border: 1px dashed var(--border-color); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: flex-start; gap: 0.4rem;">
-            <span style="color: var(--accent-blue); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;">Profile Note:</span>
+          <div style="background: rgba(0, 0, 0, 0.2); border: 1px dashed var(--border-color); border-radius: var(--radius-sm); padding: 0.4rem 0.6rem; font-size: 0.75rem; color: var(--text-muted); display: flex; align-items: flex-start; gap: 0.35rem;">
+            <span style="color: var(--accent-blue); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;">Profile Note:</span>
             <span style="color: var(--text-main); font-style: italic; word-break: break-word;">${escapeHtml(p.notes)}</span>
           </div>
         ` : ''}
+
+        <!-- Currently Borrowed Gear Section -->
+        <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.6rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: ${heldGear.length > 0 ? '0.45rem' : '0'};">
+            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: flex; align-items: center; gap: 0.35rem;">
+              <span>Currently Borrowed (${heldGear.length})</span>
+            </div>
+            ${heldGear.length > 0 ? `
+              <button class="btn btn-sm btn-amber" style="font-size: 0.68rem; padding: 0.18rem 0.45rem;" onclick="window.GearTrack.returnAllPhotographerGear(${p.id})">
+                Return All
+              </button>
+            ` : ''}
+          </div>
+
+          ${heldGear.length === 0 ? `
+            <div style="font-size: 0.75rem; color: var(--text-sub); font-style: italic;">No equipment currently borrowed.</div>
+          ` : `
+            <div style="display: flex; flex-direction: column; gap: 0.35rem; max-height: 150px; overflow-y: auto;">
+              ${heldGear.map(g => {
+                const chkNote = gearCheckoutMap[g.id] || g.notes;
+                return `
+                  <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); padding: 0.35rem 0.5rem; border-radius: 4px;">
+                    <div style="display: flex; align-items: center; gap: 0.4rem; min-width: 0;">
+                      <span style="flex-shrink: 0;">${getCategoryIcon(g.category)}</span>
+                      <div style="min-width: 0;">
+                        <div style="font-weight: 600; color: var(--text-main); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(g.name)}</div>
+                        <div style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono);">${escapeHtml(g.barcode)}</div>
+                        ${chkNote ? `<div style="font-size: 0.68rem; color: #f59e0b; font-style: italic; margin-top: 1px;">"${escapeHtml(chkNote)}"</div>` : ''}
+                      </div>
+                    </div>
+                    <button class="btn btn-sm" style="padding: 0.15rem 0.45rem; font-size: 0.68rem; flex-shrink: 0; margin-left: 0.4rem;" onclick="window.GearTrack.returnSingleItem(${g.id})">
+                      Return
+                    </button>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          `}
+        </div>
       </div>
     `;
 
