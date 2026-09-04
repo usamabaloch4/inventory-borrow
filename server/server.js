@@ -141,7 +141,8 @@ app.get('/api/network-info', async (req, res) => {
   try {
     const ifaces = getLocalNetworkInterfaces();
     const ips = ifaces.map(i => i.address);
-    const selectedIp = req.query.ip || (ifaces.length > 0 ? ifaces[0].address : '127.0.0.1');
+    const queryIp = (typeof req.query.ip === 'string' && !req.query.ip.includes('object') && req.query.ip.trim()) ? req.query.ip.trim() : null;
+    const selectedIp = queryIp || (ifaces.length > 0 ? ifaces[0].address : '127.0.0.1');
 
     const httpsUrl = `https://${selectedIp}:${HTTPS_PORT}/camera`;
     const httpUrl = `http://${selectedIp}:${HTTP_PORT}/camera`;

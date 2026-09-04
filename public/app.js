@@ -23,6 +23,9 @@
     history: [],
     networkInfo: null,
 
+    // Fuzzy selects registry
+    fuzzySelects: {},
+
     // WebSockets
     ws: null
   };
@@ -70,7 +73,8 @@
   }
 
   function soundError() {
-    playTone(220, 'sawtooth', 0.2);
+    playTone(220.00, 'sawtooth', 0.2, 0);
+    playTone(180.00, 'sawtooth', 0.25, 0.1);
     if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
   }
 
@@ -99,7 +103,8 @@
     pause: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`,
     play: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>`,
     target: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
-    zoom: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>`
+    zoom: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" x2="11" y1="8" y2="14"/><line x1="8" x2="14" y1="11" y2="11"/></svg>`,
+    chevronDown: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`
   };
 
   // --- TOAST NOTIFICATIONS ---
@@ -190,6 +195,458 @@
     loadAllData();
   }
 
+  // --- FUZZY SEARCH COMBOBOX SYSTEM ---
+  function fuzzyMatch(query, text) {
+    if (!query) return { match: true, score: 0, indices: [] };
+    if (!text) return { match: false, score: 0, indices: [] };
+
+    const q = query.trim().toLowerCase();
+    if (!q) return { match: true, score: 0, indices: [] };
+    const t = text.toLowerCase();
+
+    // 1. Exact match
+    if (t === q) {
+      return { match: true, score: 1000, indices: Array.from({ length: t.length }, (_, i) => i) };
+    }
+
+    // 2. Starts with query
+    if (t.startsWith(q)) {
+      return { match: true, score: 800 - (t.length - q.length), indices: Array.from({ length: q.length }, (_, i) => i) };
+    }
+
+    // 3. Substring match
+    const subIdx = t.indexOf(q);
+    if (subIdx !== -1) {
+      return { 
+        match: true, 
+        score: 500 - subIdx - (t.length - q.length), 
+        indices: Array.from({ length: q.length }, (_, i) => subIdx + i) 
+      };
+    }
+
+    // 4. Multi-token match (e.g. "sony 24")
+    const tokens = q.split(/\s+/).filter(Boolean);
+    if (tokens.length > 1) {
+      let allFound = true;
+      let indices = [];
+      let score = 400;
+      for (const tok of tokens) {
+        const idx = t.indexOf(tok);
+        if (idx === -1) {
+          allFound = false;
+          break;
+        }
+        for (let i = 0; i < tok.length; i++) indices.push(idx + i);
+      }
+      if (allFound) {
+        return { match: true, score: score - (t.length - q.length), indices: [...new Set(indices)].sort((a, b) => a - b) };
+      }
+    }
+
+    // 5. Sequential character fuzzy match with word-boundary bonus
+    let qIdx = 0;
+    let score = 0;
+    let indices = [];
+    let prevMatchIdx = -2;
+
+    for (let i = 0; i < t.length && qIdx < q.length; i++) {
+      if (t[i] === q[qIdx]) {
+        indices.push(i);
+        let charScore = 15;
+        if (i === 0 || /[\s\-_/([\]:,]/.test(t[i - 1])) {
+          charScore += 35; // Word start bonus
+        }
+        if (i === prevMatchIdx + 1) {
+          charScore += 25; // Consecutive character bonus
+        }
+        score += charScore;
+        prevMatchIdx = i;
+        qIdx++;
+      }
+    }
+
+    if (qIdx === q.length) {
+      score -= (t.length - q.length);
+      return { match: true, score, indices };
+    }
+
+    return { match: false, score: 0, indices: [] };
+  }
+
+  function highlightFuzzyText(text, indices) {
+    if (!text) return '';
+    if (!indices || indices.length === 0) return escapeHtml(text);
+    const indexSet = new Set(indices);
+    let html = '';
+    for (let i = 0; i < text.length; i++) {
+      const char = escapeHtml(text[i]);
+      if (indexSet.has(i)) {
+        html += `<span class="fuzzy-match-highlight">${char}</span>`;
+      } else {
+        html += char;
+      }
+    }
+    return html;
+  }
+
+  class FuzzySelect {
+    constructor(selectEl, options = {}) {
+      if (!selectEl) return;
+      this.selectEl = selectEl;
+      this.options = {
+        placeholder: options.placeholder || selectEl.getAttribute('placeholder') || '-- Select --',
+        icon: options.icon || null,
+        clearOnSelect: !!options.clearOnSelect,
+        allowClear: options.allowClear !== false,
+        searchPlaceholder: options.searchPlaceholder || 'Type to fuzzy search...',
+        onSelect: options.onSelect || null,
+        ...options
+      };
+
+      this.isOpen = false;
+      this.items = [];
+      this.highlightedIndex = -1;
+      this.visibleItems = [];
+
+      this.initDom();
+      this.bindEvents();
+      this.syncFromNative();
+    }
+
+    initDom() {
+      this.selectEl.style.display = 'none';
+      this.selectEl.setAttribute('aria-hidden', 'true');
+      this.selectEl.tabIndex = -1;
+
+      let container = this.selectEl.nextElementSibling;
+      if (container && container.classList.contains('fuzzy-select-container')) {
+        this.container = container;
+      } else {
+        this.container = document.createElement('div');
+        this.container.className = 'fuzzy-select-container';
+        if (this.selectEl.id) {
+          this.container.id = `fuzzy-${this.selectEl.id}`;
+        }
+        this.selectEl.parentNode.insertBefore(this.container, this.selectEl.nextSibling);
+      }
+
+      if (this.selectEl.style.maxWidth) {
+        this.container.style.maxWidth = this.selectEl.style.maxWidth;
+        this.container.style.marginLeft = 'auto';
+        this.container.style.marginRight = 'auto';
+      }
+      if (this.selectEl.style.width) {
+        this.container.style.width = this.selectEl.style.width;
+      }
+      if (this.selectEl.style.flex) {
+        this.container.style.flex = this.selectEl.style.flex;
+      }
+      if (this.selectEl.style.margin) {
+        this.container.style.margin = this.selectEl.style.margin;
+      }
+
+      this.container.innerHTML = `
+        <div class="fuzzy-select-trigger" tabindex="0" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+          <div class="fuzzy-select-trigger-content">
+            <span class="fuzzy-select-trigger-icon" style="${this.options.icon ? 'display:flex; align-items:center;' : 'display:none;'}">${this.options.icon || ''}</span>
+            <span class="fuzzy-select-label fuzzy-select-placeholder">${escapeHtml(this.options.placeholder)}</span>
+          </div>
+          <div class="fuzzy-select-icons">
+            <span class="fuzzy-select-clear" title="Clear" style="display: none; cursor: pointer; padding: 2px;">${Icons.cross}</span>
+            <span class="fuzzy-select-chevron" style="display: flex; align-items: center;">${Icons.chevronDown}</span>
+          </div>
+        </div>
+        <div class="fuzzy-select-dropdown" role="listbox">
+          <div class="fuzzy-select-search-wrap">
+            <span style="color: var(--text-muted); display:flex; align-items:center;">${Icons.search}</span>
+            <input type="text" class="fuzzy-select-search-input" placeholder="${escapeHtml(this.options.searchPlaceholder)}" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="fuzzy-select-list"></div>
+        </div>
+      `;
+
+      this.trigger = this.container.querySelector('.fuzzy-select-trigger');
+      this.labelEl = this.container.querySelector('.fuzzy-select-label');
+      this.iconEl = this.container.querySelector('.fuzzy-select-trigger-icon');
+      this.clearBtn = this.container.querySelector('.fuzzy-select-clear');
+      this.dropdown = this.container.querySelector('.fuzzy-select-dropdown');
+      this.searchInput = this.container.querySelector('.fuzzy-select-search-input');
+      this.listEl = this.container.querySelector('.fuzzy-select-list');
+    }
+
+    bindEvents() {
+      this.trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (e.target.closest('.fuzzy-select-clear')) {
+          this.clearValue();
+          return;
+        }
+        this.toggle();
+      });
+
+      this.trigger.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.open();
+        }
+      });
+
+      this.searchInput.addEventListener('input', () => {
+        this.renderList(this.searchInput.value);
+      });
+
+      this.searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.navigate(1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.navigate(-1);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          this.selectHighlighted();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          this.close();
+        } else if (e.key === 'Tab') {
+          this.close();
+        }
+      });
+
+      // Close when clicking outside
+      document.addEventListener('click', (e) => {
+        if (!this.container.contains(e.target) && this.isOpen) {
+          this.close();
+        }
+      });
+    }
+
+    syncFromNative() {
+      this.items = [];
+      const children = Array.from(this.selectEl.children);
+
+      for (const node of children) {
+        if (node.tagName.toLowerCase() === 'optgroup') {
+          const groupLabel = node.getAttribute('label') || '';
+          const groupOpts = Array.from(node.querySelectorAll('option'));
+          for (const opt of groupOpts) {
+            this.items.push(this.parseOption(opt, groupLabel));
+          }
+        } else if (node.tagName.toLowerCase() === 'option') {
+          this.items.push(this.parseOption(node, ''));
+        }
+      }
+
+      this.updateTriggerDisplay();
+      if (this.isOpen) {
+        this.renderList(this.searchInput.value);
+      }
+    }
+
+    parseOption(opt, group = '') {
+      const rawText = opt.textContent.trim();
+      const isPlaceholder = !opt.value && (rawText.startsWith('--') || rawText.startsWith('+'));
+
+      return {
+        value: opt.value,
+        label: rawText,
+        group,
+        disabled: opt.disabled,
+        selected: opt.selected,
+        isPlaceholder,
+        rawText: `${rawText} ${group}`
+      };
+    }
+
+    updateTriggerDisplay() {
+      const selectedVal = this.selectEl.value;
+      const selectedItem = this.items.find(i => i.value === selectedVal && !i.isPlaceholder);
+
+      if (selectedItem) {
+        this.labelEl.textContent = selectedItem.label;
+        this.labelEl.classList.remove('fuzzy-select-placeholder');
+        if (this.options.allowClear && !this.options.clearOnSelect) {
+          this.clearBtn.style.display = 'inline-flex';
+        } else {
+          this.clearBtn.style.display = 'none';
+        }
+      } else {
+        const placeholderItem = this.items.find(i => i.isPlaceholder);
+        const placeholderText = placeholderItem ? placeholderItem.label : this.options.placeholder;
+        this.labelEl.textContent = placeholderText;
+        this.labelEl.classList.add('fuzzy-select-placeholder');
+        this.clearBtn.style.display = 'none';
+      }
+    }
+
+    open() {
+      document.querySelectorAll('.fuzzy-select-container.open').forEach(c => {
+        if (c !== this.container) c.classList.remove('open');
+      });
+
+      this.isOpen = true;
+      this.container.classList.add('open');
+      this.trigger.setAttribute('aria-expanded', 'true');
+      this.searchInput.value = '';
+      this.renderList('');
+      setTimeout(() => {
+        this.searchInput.focus();
+      }, 15);
+    }
+
+    close() {
+      this.isOpen = false;
+      this.container.classList.remove('open');
+      this.trigger.setAttribute('aria-expanded', 'false');
+    }
+
+    toggle() {
+      if (this.isOpen) this.close();
+      else this.open();
+    }
+
+    clearValue() {
+      this.selectEl.value = '';
+      this.selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+      this.updateTriggerDisplay();
+      if (this.options.onSelect) this.options.onSelect('');
+    }
+
+    renderList(query = '') {
+      this.listEl.innerHTML = '';
+      this.visibleItems = [];
+
+      let scoredItems = [];
+      for (const item of this.items) {
+        if (item.isPlaceholder && !item.value) continue;
+        const res = fuzzyMatch(query, item.rawText);
+        if (res.match) {
+          scoredItems.push({
+            item,
+            score: res.score,
+            indices: res.indices
+          });
+        }
+      }
+
+      if (query) {
+        scoredItems.sort((a, b) => b.score - a.score);
+      }
+
+      if (scoredItems.length === 0) {
+        this.listEl.innerHTML = `
+          <div class="fuzzy-select-empty">
+            <div style="opacity: 0.6; margin-bottom: 0.35rem;">${Icons.search}</div>
+            <div>No matching results found</div>
+          </div>
+        `;
+        this.highlightedIndex = -1;
+        return;
+      }
+
+      let currentGroup = null;
+
+      scoredItems.forEach((scored, idx) => {
+        const { item, indices } = scored;
+        this.visibleItems.push(item);
+
+        if (!query && item.group && item.group !== currentGroup) {
+          currentGroup = item.group;
+          const groupEl = document.createElement('div');
+          groupEl.className = 'fuzzy-select-group-title';
+          groupEl.textContent = currentGroup;
+          this.listEl.appendChild(groupEl);
+        }
+
+        const optEl = document.createElement('div');
+        optEl.className = 'fuzzy-select-option';
+        optEl.setAttribute('role', 'option');
+        optEl.dataset.value = item.value;
+        optEl.dataset.index = idx;
+
+        if (this.selectEl.value === item.value && !this.options.clearOnSelect) {
+          optEl.classList.add('selected');
+        }
+
+        const highlightedText = highlightFuzzyText(item.label, indices);
+        optEl.innerHTML = `
+          <div class="fuzzy-select-option-main">
+            <span class="fuzzy-select-option-text">${highlightedText}</span>
+          </div>
+          ${item.group && query ? `<span class="fuzzy-select-option-sub">${escapeHtml(item.group)}</span>` : ''}
+        `;
+
+        optEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.selectItem(item);
+        });
+
+        this.listEl.appendChild(optEl);
+      });
+
+      this.highlightedIndex = 0;
+      this.updateHighlight();
+    }
+
+    updateHighlight() {
+      const opts = this.listEl.querySelectorAll('.fuzzy-select-option');
+      opts.forEach((el, idx) => {
+        if (idx === this.highlightedIndex) {
+          el.classList.add('highlighted');
+          el.scrollIntoView({ block: 'nearest' });
+        } else {
+          el.classList.remove('highlighted');
+        }
+      });
+    }
+
+    navigate(dir) {
+      if (this.visibleItems.length === 0) return;
+      this.highlightedIndex += dir;
+      if (this.highlightedIndex < 0) this.highlightedIndex = this.visibleItems.length - 1;
+      if (this.highlightedIndex >= this.visibleItems.length) this.highlightedIndex = 0;
+      this.updateHighlight();
+    }
+
+    selectHighlighted() {
+      if (this.highlightedIndex >= 0 && this.highlightedIndex < this.visibleItems.length) {
+        this.selectItem(this.visibleItems[this.highlightedIndex]);
+      }
+    }
+
+    selectItem(item) {
+      this.selectEl.value = item.value;
+      this.selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+
+      if (this.options.clearOnSelect) {
+        this.selectEl.value = '';
+        this.updateTriggerDisplay();
+      } else {
+        this.updateTriggerDisplay();
+      }
+
+      this.close();
+      if (this.options.onSelect) {
+        this.options.onSelect(item.value, item);
+      }
+    }
+  }
+
+  function initOrUpdateFuzzySelect(selectId, options = {}) {
+    const el = document.getElementById(selectId);
+    if (!el) return null;
+    if (!state.fuzzySelects) state.fuzzySelects = {};
+
+    if (state.fuzzySelects[selectId]) {
+      state.fuzzySelects[selectId].syncFromNative();
+      return state.fuzzySelects[selectId];
+    } else {
+      const fs = new FuzzySelect(el, options);
+      state.fuzzySelects[selectId] = fs;
+      return fs;
+    }
+  }
+
   // --- DATA LOADING & RENDERING ---
   async function loadAllData() {
     try {
@@ -210,6 +667,7 @@
       renderHistoryTable();
       renderLabelSheet();
       updatePhotographerDropdowns();
+      updateGearDropdowns();
     } catch (err) {
       console.error('Failed to load data:', err);
     }
@@ -227,16 +685,84 @@
 
   function updatePhotographerDropdowns() {
     const select = document.getElementById('quickSelectPhotographer');
-    const currentVal = select.value;
-    select.innerHTML = '<option value="">-- Choose Photographer --</option>';
+    if (select) {
+      const currentVal = select.value;
+      select.innerHTML = '<option value="">-- Choose Photographer --</option>';
 
-    for (const p of state.photographers) {
-      const opt = document.createElement('option');
-      opt.value = p.id;
-      opt.textContent = `${p.name} (${p.barcode}) ${p.activeGearCount > 0 ? `[${p.activeGearCount} items held]` : ''}`;
-      select.appendChild(opt);
+      for (const p of state.photographers) {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.name} (${p.barcode}) ${p.activeGearCount > 0 ? `[${p.activeGearCount} items held]` : ''}`;
+        select.appendChild(opt);
+      }
+      if (currentVal) select.value = currentVal;
+
+      initOrUpdateFuzzySelect('quickSelectPhotographer', {
+        placeholder: '-- Choose Photographer --',
+        icon: Icons.user,
+        searchPlaceholder: 'Search photographer or ID...'
+      });
     }
-    if (currentVal) select.value = currentVal;
+
+    const modalSelect = document.getElementById('manualModalPhotographerSelect');
+    if (modalSelect) {
+      const curVal = modalSelect.value;
+      modalSelect.innerHTML = '<option value="">-- Choose Crew Member --</option>';
+      for (const p of state.photographers) {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.name} (${p.role || 'Crew'} - ${p.barcode})`;
+        modalSelect.appendChild(opt);
+      }
+      if (curVal) modalSelect.value = curVal;
+
+      initOrUpdateFuzzySelect('manualModalPhotographerSelect', {
+        placeholder: '-- Choose Crew Member --',
+        icon: Icons.user,
+        searchPlaceholder: 'Search crew member or role...'
+      });
+    }
+  }
+
+  function updateGearDropdowns() {
+    const select = document.getElementById('quickSelectGear');
+    if (!select) return;
+
+    select.innerHTML = '<option value="">+ Manually add gear to basket...</option>';
+
+    const available = state.gear.filter(g => g.status === 'available');
+    const checkedOut = state.gear.filter(g => g.status === 'checked_out');
+
+    if (available.length > 0) {
+      const groupAvail = document.createElement('optgroup');
+      groupAvail.label = `Available Equipment (${available.length})`;
+      for (const g of available) {
+        const opt = document.createElement('option');
+        opt.value = g.id;
+        opt.textContent = `${g.name} (${g.category}) - ${g.barcode}`;
+        groupAvail.appendChild(opt);
+      }
+      select.appendChild(groupAvail);
+    }
+
+    if (checkedOut.length > 0) {
+      const groupOut = document.createElement('optgroup');
+      groupOut.label = `Checked Out (Reassign/Transfer) (${checkedOut.length})`;
+      for (const g of checkedOut) {
+        const opt = document.createElement('option');
+        opt.value = g.id;
+        opt.textContent = `${g.name} [With: ${g.current_photographer_name || 'Assigned'}] - ${g.barcode}`;
+        groupOut.appendChild(opt);
+      }
+      select.appendChild(groupOut);
+    }
+
+    initOrUpdateFuzzySelect('quickSelectGear', {
+      placeholder: '+ Quick add gear to basket...',
+      icon: Icons.plus,
+      clearOnSelect: true,
+      searchPlaceholder: 'Search gear name, category, barcode...'
+    });
   }
 
   // Render Gear Inventory
@@ -360,21 +886,62 @@
     grid.innerHTML = filtered.map(p => {
       const initials = p.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
       const heldGear = state.gear.filter(g => g.current_photographer_id == p.id);
+      const isActive = heldGear.length > 0;
+
+      // Find active checkout notes from audit log for this crew member's currently held gear
+      const activeCheckoutNotes = [];
+      const gearCheckoutMap = {};
+      for (const g of heldGear) {
+        const log = state.history.find(h => h.action === 'checkout' && h.gear_id === g.id && h.photographer_id == p.id && h.notes);
+        if (log && log.notes) {
+          gearCheckoutMap[g.id] = log.notes;
+          if (!activeCheckoutNotes.includes(log.notes)) {
+            activeCheckoutNotes.push(log.notes);
+          }
+        }
+      }
 
       return `
-        <div class="gear-card" data-id="${p.id}">
-          <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <div class="photo-avatar">${initials}</div>
-            <div style="flex: 1;">
-              <h4 style="font-size: 1.05rem; font-weight: 700; color: var(--text-main);">${escapeHtml(p.name)}</h4>
-              <div style="font-size: 0.78rem; color: var(--accent-blue); font-weight: 600;">${escapeHtml(p.role || 'Photographer')}</div>
+        <div class="gear-card photographer-card" data-id="${p.id}">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem;">
+            <div style="display: flex; align-items: center; gap: 0.75rem; min-width: 0;">
+              <div class="photo-avatar" style="flex-shrink: 0;">${initials}</div>
+              <div style="min-width: 0;">
+                <h4 style="font-size: 1.05rem; font-weight: 700; color: var(--text-main); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.name)}</h4>
+                <div style="font-size: 0.78rem; color: var(--accent-blue); font-weight: 600;">${escapeHtml(p.role || 'Photographer')}</div>
+              </div>
             </div>
+            ${isActive ? `
+              <span class="badge badge-warning" style="font-size: 0.7rem; flex-shrink: 0;">Active (${heldGear.length})</span>
+            ` : `
+              <span class="badge badge-success" style="font-size: 0.7rem; flex-shrink: 0;">Ready</span>
+            `}
           </div>
 
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
             <span class="gear-barcode-tag">${Icons.badge} <span>ID: ${escapeHtml(p.barcode)}</span></span>
             ${p.phone ? `<span style="font-size: 0.78rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 0.3rem;">${Icons.phone} <span>${escapeHtml(p.phone)}</span></span>` : ''}
+            ${p.email ? `<span style="font-size: 0.78rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 0.3rem;">@ <span>${escapeHtml(p.email)}</span></span>` : ''}
           </div>
+
+          <!-- Active Checkout Notes (from audit transaction log) -->
+          ${activeCheckoutNotes.length > 0 ? `
+            <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.25rem;">
+              <div style="color: #f59e0b; font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; display: flex; align-items: center; gap: 0.35rem;">
+                <span style="display: inline-flex;">${Icons.tag}</span>
+                <span>Active Checkout Notes:</span>
+              </div>
+              ${activeCheckoutNotes.map(n => `<div style="color: var(--text-main); font-weight: 500; font-style: italic; word-break: break-word;">"${escapeHtml(n)}"</div>`).join('')}
+            </div>
+          ` : ''}
+
+          <!-- Permanent Profile Notes -->
+          ${p.notes ? `
+            <div style="background: rgba(0,0,0,0.2); border: 1px dashed var(--border-color); border-radius: var(--radius-sm); padding: 0.45rem 0.65rem; font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: flex-start; gap: 0.45rem;">
+              <span style="color: var(--accent-blue); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0;">Profile Note:</span>
+              <span style="color: var(--text-main); font-style: italic; word-break: break-word;">${escapeHtml(p.notes)}</span>
+            </div>
+          ` : ''}
 
           <!-- Active Gear Held -->
           <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.75rem;">
@@ -393,35 +960,39 @@
               <div style="font-size: 0.78rem; color: var(--text-sub);">No gear currently checked out.</div>
             ` : `
               <div style="display: flex; flex-direction: column; gap: 0.35rem; max-height: 140px; overflow-y: auto;">
-                ${heldGear.map(g => `
-                  <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; background: rgba(255,255,255,0.03); padding: 0.35rem 0.5rem; border-radius: 4px;">
-                    <div style="display: flex; align-items: center; gap: 0.4rem;">
-                      ${getCategoryIcon(g.category)}
-                      <div>
-                        <span>${escapeHtml(g.name)}</span>
-                        <div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${escapeHtml(g.barcode)}</div>
+                ${heldGear.map(g => {
+                  const chkNote = gearCheckoutMap[g.id] || g.notes;
+                  return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; background: rgba(255,255,255,0.03); padding: 0.35rem 0.5rem; border-radius: 4px;">
+                      <div style="display: flex; align-items: center; gap: 0.4rem; min-width: 0;">
+                        ${getCategoryIcon(g.category)}
+                        <div style="min-width: 0;">
+                          <div style="font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(g.name)}</div>
+                          <div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${escapeHtml(g.barcode)}</div>
+                          ${chkNote ? `<div style="font-size: 0.7rem; color: #f59e0b; font-style: italic; margin-top: 1px;">"${escapeHtml(chkNote)}"</div>` : ''}
+                        </div>
                       </div>
+                      <button class="btn btn-sm" style="padding: 0.15rem 0.4rem; font-size: 0.7rem; flex-shrink: 0;" onclick="window.GearTrack.returnSingleItem(${g.id})">
+                        Return
+                      </button>
                     </div>
-                    <button class="btn btn-sm" style="padding: 0.15rem 0.4rem; font-size: 0.7rem;" onclick="window.GearTrack.returnSingleItem(${g.id})">
-                      Return
-                    </button>
-                  </div>
-                `).join('')}
+                  `;
+                }).join('')}
               </div>
             `}
           </div>
 
           <div class="gear-actions">
             <button class="btn btn-sm btn-primary" onclick="window.GearTrack.selectPhotographerForSession(${p.id})" style="flex: 1;">
-              ${Icons.target} Start Checkout Session
+              ${Icons.target} Start Checkout
             </button>
             <button class="btn btn-sm" onclick="window.GearTrack.openPhotographerBadgeModal(${p.id})" title="Print ID Badge">
               ${Icons.badge} Badge
             </button>
-            <button class="btn btn-sm" onclick="window.GearTrack.editPhotographer(${p.id})">
+            <button class="btn btn-sm" onclick="window.GearTrack.editPhotographer(${p.id})" title="Edit Member">
               ${Icons.edit}
             </button>
-            <button class="btn btn-sm btn-danger" onclick="window.GearTrack.deletePhotographer(${p.id})">
+            <button class="btn btn-sm btn-danger" onclick="window.GearTrack.deletePhotographer(${p.id})" title="Delete Member">
               ${Icons.trash}
             </button>
           </div>
@@ -964,11 +1535,11 @@
 
     if (!state.selectedPhotographer) {
       container.innerHTML = `
-        <div style="text-align: center; padding: 1.5rem 1rem; border: 2px dashed var(--border-color); border-radius: var(--radius-md); color: var(--text-muted);">
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 1.5rem 1rem; border: 2px dashed var(--border-color); border-radius: var(--radius-md); color: var(--text-muted);">
           <div class="empty-state-icon" style="color: var(--text-muted); opacity: 0.5; margin-bottom: 0.5rem;">${Icons.badge}</div>
           <div style="font-weight: 600; color: var(--text-main); margin-bottom: 0.25rem;">No Photographer Selected</div>
           <div style="font-size: 0.8rem; margin-bottom: 0.75rem;">Scan an ID Card Barcode or pick from directory:</div>
-          <select id="quickSelectPhotographer" class="select-input" style="max-width: 260px; width: 100%;">
+          <select id="quickSelectPhotographer" class="select-input" style="max-width: 260px; width: 100%; margin: 0 auto;">
             <option value="">-- Choose Photographer --</option>
           </select>
         </div>
@@ -983,17 +1554,43 @@
     const p = state.selectedPhotographer;
     const initials = p.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
 
+    const heldGear = state.gear.filter(g => g.current_photographer_id == p.id);
+    const activeCheckoutNotes = [];
+    for (const g of heldGear) {
+      const log = state.history.find(h => h.action === 'checkout' && h.gear_id === g.id && h.photographer_id == p.id && h.notes);
+      if (log && log.notes && !activeCheckoutNotes.includes(log.notes)) {
+        activeCheckoutNotes.push(log.notes);
+      }
+    }
+
     container.innerHTML = `
-      <div class="photographer-card-selected">
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
-          <div class="photo-avatar">${initials}</div>
-          <div>
-            <div style="font-weight: 700; color: var(--text-main); font-size: 1.05rem;">${escapeHtml(p.name)}</div>
-            <div style="font-size: 0.78rem; color: #93c5fd; font-family: var(--font-mono);">${Icons.badge} ID: ${escapeHtml(p.barcode)}</div>
-            <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(p.role || 'Photographer')}</div>
+      <div class="photographer-card-selected" style="flex-direction: column; align-items: stretch; gap: 0.75rem;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;">
+          <div style="display: flex; align-items: center; gap: 0.75rem; min-width: 0;">
+            <div class="photo-avatar" style="flex-shrink: 0;">${initials}</div>
+            <div style="min-width: 0;">
+              <div style="font-weight: 700; color: var(--text-main); font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(p.name)}</div>
+              <div style="font-size: 0.78rem; color: var(--accent-blue); font-family: var(--font-mono); font-weight: 600;">${Icons.badge} ID: ${escapeHtml(p.barcode)}</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(p.role || 'Photographer')} ${p.phone ? `• ${Icons.phone} ${escapeHtml(p.phone)}` : ''}</div>
+            </div>
           </div>
+          <button class="btn btn-sm btn-danger" onclick="window.GearTrack.clearSelectedPhotographer()" title="Switch crew member" style="flex-shrink: 0;">Change</button>
         </div>
-        <button class="btn btn-sm btn-danger" onclick="window.GearTrack.clearSelectedPhotographer()">Change</button>
+        ${activeCheckoutNotes.length > 0 ? `
+          <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.25rem;">
+            <div style="color: #f59e0b; font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; display: flex; align-items: center; gap: 0.35rem;">
+              <span style="display: inline-flex;">${Icons.tag}</span>
+              <span>Active Checkout Notes:</span>
+            </div>
+            ${activeCheckoutNotes.map(n => `<div style="color: var(--text-main); font-weight: 500; font-style: italic; word-break: break-word;">"${escapeHtml(n)}"</div>`).join('')}
+          </div>
+        ` : ''}
+        ${p.notes ? `
+          <div style="background: rgba(0, 0, 0, 0.2); border: 1px dashed var(--border-color); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: flex-start; gap: 0.4rem;">
+            <span style="color: var(--accent-blue); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;">Profile Note:</span>
+            <span style="color: var(--text-main); font-style: italic; word-break: break-word;">${escapeHtml(p.notes)}</span>
+          </div>
+        ` : ''}
       </div>
     `;
 
@@ -1095,6 +1692,7 @@
 
   // 1. Connect Phone Modal Setup
   async function openConnectPhoneModal(selectedIp = '') {
+    if (typeof selectedIp !== 'string') selectedIp = '';
     try {
       const url = selectedIp ? `/api/network-info?ip=${encodeURIComponent(selectedIp)}` : '/api/network-info';
       const info = await api(url);
@@ -1249,6 +1847,83 @@
       }
     });
 
+    // Quick select gear dropdown directly in checkout panel
+    const quickGearSel = document.getElementById('quickSelectGear');
+    if (quickGearSel) {
+      quickGearSel.addEventListener('change', (e) => {
+        const gearId = parseInt(e.target.value, 10);
+        if (gearId) {
+          const gear = state.gear.find(g => g.id === gearId);
+          if (gear) {
+            addGearToBasket(gear);
+          }
+          e.target.value = '';
+        }
+      });
+    }
+
+    // Manual Checkout Modal Triggers
+    const btnManualHeader = document.getElementById('btnManualCheckoutTrigger');
+    if (btnManualHeader) {
+      btnManualHeader.addEventListener('click', () => openManualCheckoutModal(state.selectedPhotographer ? state.selectedPhotographer.id : null));
+    }
+
+    const btnManualGear = document.getElementById('btnManualCheckoutFromGear');
+    if (btnManualGear) {
+      btnManualGear.addEventListener('click', () => openManualCheckoutModal(state.selectedPhotographer ? state.selectedPhotographer.id : null));
+    }
+
+    // Modal Search Gear Input
+    const modalGearSearch = document.getElementById('manualModalGearSearch');
+    if (modalGearSearch) {
+      modalGearSearch.addEventListener('input', () => {
+        renderManualCheckoutGearList();
+      });
+    }
+
+    // Modal Photographer Select Change
+    const modalPhotoSel = document.getElementById('manualModalPhotographerSelect');
+    if (modalPhotoSel) {
+      modalPhotoSel.addEventListener('change', updateManualModalSubmitState);
+    }
+
+    // Manual Checkout Form Submit
+    const manualForm = document.getElementById('manualCheckoutForm');
+    if (manualForm) {
+      manualForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const photoId = parseInt(document.getElementById('manualModalPhotographerSelect').value, 10);
+        const notes = document.getElementById('manualModalNotes').value.trim();
+        const checkedBoxes = document.querySelectorAll('#manualModalGearList input[type="checkbox"]:checked');
+        const gearIds = Array.from(checkedBoxes).map(cb => parseInt(cb.value, 10));
+
+        if (!photoId || gearIds.length === 0) {
+          showToast('Please select a crew member and at least one equipment item', 'error');
+          return;
+        }
+
+        try {
+          const photo = state.photographers.find(p => p.id === photoId);
+          await api('/api/checkout', {
+            method: 'POST',
+            body: JSON.stringify({
+              photographerId: photoId,
+              gearIds,
+              notes
+            })
+          });
+
+          soundCheckoutSuccess();
+          showToast(`Checked out ${gearIds.length} items to ${photo ? photo.name : 'crew member'}!`, 'success');
+          closeModal('modalManualCheckout');
+          loadAllData();
+        } catch (err) {
+          soundError();
+          showToast('Manual checkout failed: ' + err.message, 'error');
+        }
+      });
+    }
+
     // Clear Session & Basket
     document.getElementById('btnClearSession').addEventListener('click', () => {
       state.selectedPhotographer = null;
@@ -1268,8 +1943,19 @@
     document.getElementById('gearStatusFilter').addEventListener('change', renderGearInventory);
     document.getElementById('photoSearchInput').addEventListener('input', renderPhotographers);
 
+    initOrUpdateFuzzySelect('gearCategoryFilter', {
+      placeholder: 'All Categories',
+      icon: Icons.tag,
+      searchPlaceholder: 'Filter category...'
+    });
+    initOrUpdateFuzzySelect('gearStatusFilter', {
+      placeholder: 'All Statuses',
+      icon: Icons.target,
+      searchPlaceholder: 'Filter status...'
+    });
+
     // Modal Triggers
-    document.getElementById('btnConnectPhone').addEventListener('click', openConnectPhoneModal);
+    document.getElementById('btnConnectPhone').addEventListener('click', () => openConnectPhoneModal(''));
     document.getElementById('btnQuickRegister').addEventListener('click', () => openQuickRegisterModal(''));
     document.getElementById('btnAddGearModalTrigger').addEventListener('click', () => openGearFormModal());
     document.getElementById('btnAddPhotographerModalTrigger').addEventListener('click', () => openPhotographerFormModal());
@@ -1508,6 +2194,104 @@
     openModal('modalPhotographerForm');
   }
 
+  // --- MANUAL CHECKOUT MODAL LOGIC ---
+  let manualCheckoutSelectedGearIds = new Set();
+
+  function openManualCheckoutModal(defaultPhotoId = null, preselectedGearIds = []) {
+    manualCheckoutSelectedGearIds = new Set(preselectedGearIds || []);
+    
+    // If items currently in basket, preselect them
+    if (state.basketItems.length > 0 && manualCheckoutSelectedGearIds.size === 0) {
+      state.basketItems.forEach(item => manualCheckoutSelectedGearIds.add(item.id));
+    }
+
+    updatePhotographerDropdowns();
+
+    const photoSel = document.getElementById('manualModalPhotographerSelect');
+    if (photoSel && defaultPhotoId) {
+      photoSel.value = defaultPhotoId;
+    } else if (photoSel && state.selectedPhotographer) {
+      photoSel.value = state.selectedPhotographer.id;
+    }
+
+    if (state.fuzzySelects && state.fuzzySelects['manualModalPhotographerSelect']) {
+      state.fuzzySelects['manualModalPhotographerSelect'].updateTriggerDisplay();
+    }
+
+    document.getElementById('manualModalNotes').value = '';
+    document.getElementById('manualModalGearSearch').value = '';
+
+    renderManualCheckoutGearList();
+    updateManualModalSubmitState();
+    openModal('modalManualCheckout');
+  }
+
+  function renderManualCheckoutGearList() {
+    const container = document.getElementById('manualModalGearList');
+    if (!container) return;
+
+    const query = (document.getElementById('manualModalGearSearch').value || '').toLowerCase();
+
+    let filtered = state.gear.filter(g => {
+      if (query) {
+        const text = `${g.name} ${g.category} ${g.barcode} ${g.serial_number || ''} ${g.current_photographer_name || ''}`.toLowerCase();
+        if (!text.includes(query)) return false;
+      }
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      container.innerHTML = `<div style="padding: 1.5rem; text-align: center; color: var(--text-muted); font-size: 0.85rem;">No equipment matches your search.</div>`;
+      return;
+    }
+
+    container.innerHTML = filtered.map(g => {
+      const isChecked = manualCheckoutSelectedGearIds.has(g.id);
+      const isOut = g.status === 'checked_out';
+      const isMaint = g.status === 'maintenance';
+
+      let statusBadge = `<span class="badge badge-success" style="font-size: 0.7rem;">Available</span>`;
+      if (isOut) {
+        statusBadge = `<span class="badge badge-warning" style="font-size: 0.7rem;">Out with ${escapeHtml(g.current_photographer_name || 'Assigned')}</span>`;
+      } else if (isMaint) {
+        statusBadge = `<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-size: 0.7rem;">Maintenance</span>`;
+      }
+
+      return `
+        <label style="display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; padding: 0.45rem 0.6rem; background: ${isChecked ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255,255,255,0.02)'}; border: 1px solid ${isChecked ? 'rgba(59, 130, 246, 0.4)' : 'rgba(255,255,255,0.06)'}; border-radius: 6px; cursor: pointer; transition: all 0.15s ease;">
+          <div style="display: flex; align-items: center; gap: 0.6rem; flex: 1; min-width: 0;">
+            <input type="checkbox" value="${g.id}" ${isChecked ? 'checked' : ''} onchange="window.GearTrack.toggleManualGearSelection(${g.id}, this.checked)" style="width: 16px; height: 16px; accent-color: var(--accent-blue);">
+            <div style="min-width: 0;">
+              <div style="font-weight: 600; font-size: 0.85rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                ${escapeHtml(g.name)}
+              </div>
+              <div style="font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono);">
+                ${escapeHtml(g.category)} | Code: ${escapeHtml(g.barcode)} ${g.serial_number ? `| SN: ${escapeHtml(g.serial_number)}` : ''}
+              </div>
+            </div>
+          </div>
+          <div>${statusBadge}</div>
+        </label>
+      `;
+    }).join('');
+  }
+
+  function updateManualModalSubmitState() {
+    const photoSel = document.getElementById('manualModalPhotographerSelect');
+    const btn = document.getElementById('btnSubmitManualModalCheckout');
+    const countSpan = document.getElementById('manualModalSubmitCount');
+    const headerCount = document.getElementById('manualModalSelectedCount');
+
+    const count = manualCheckoutSelectedGearIds.size;
+    if (countSpan) countSpan.textContent = count;
+    if (headerCount) headerCount.textContent = `${count} item${count === 1 ? '' : 's'} selected`;
+
+    const isValid = photoSel && photoSel.value && count > 0;
+    if (btn) {
+      btn.disabled = !isValid;
+    }
+  }
+
   // --- HELPER UTILITIES ---
   function getCategoryIcon(cat) {
     const icons = {
@@ -1557,6 +2341,19 @@
     },
     stopCamera() {
       stopCameraStream();
+    },
+    openManualCheckout(photoId = null, gearId = null) {
+      const gearIds = gearId ? [gearId] : [];
+      openManualCheckoutModal(photoId, gearIds);
+    },
+    toggleManualGearSelection(gearId, isChecked) {
+      if (isChecked) {
+        manualCheckoutSelectedGearIds.add(gearId);
+      } else {
+        manualCheckoutSelectedGearIds.delete(gearId);
+      }
+      updateManualModalSubmitState();
+      renderManualCheckoutGearList();
     },
     addToSessionBasket(gearId) {
       const gear = state.gear.find(g => g.id === gearId);
@@ -1725,8 +2522,57 @@
     if (wrapDM) wrapDM.style.display = fmt === 'dm' ? 'flex' : 'none';
   }
 
+  // --- THEME MANAGEMENT ---
+  function initTheme() {
+    const saved = localStorage.getItem('geartrack_theme') || 'dark';
+    setTheme(saved, false);
+
+    const btn = document.getElementById('btnThemeToggle');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme') || 'dark';
+        const next = current === 'dark' ? 'light' : 'dark';
+        setTheme(next, true);
+      });
+    }
+  }
+
+  function setTheme(theme, notify = false) {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('geartrack_theme', theme);
+
+    const sunIcon = document.getElementById('themeToggleIconSun');
+    const moonIcon = document.getElementById('themeToggleIconMoon');
+    const btn = document.getElementById('btnThemeToggle');
+
+    if (sunIcon && moonIcon) {
+      if (theme === 'light') {
+        sunIcon.style.display = 'none';
+        moonIcon.style.display = 'inline-flex';
+        if (btn) btn.setAttribute('title', 'Switch to Dark mode');
+      } else {
+        sunIcon.style.display = 'inline-flex';
+        moonIcon.style.display = 'none';
+        if (btn) btn.setAttribute('title', 'Switch to Light mode');
+      }
+    }
+
+    if (notify) {
+      showToast(`Switched to ${theme === 'light' ? 'Light' : 'Dark'} mode`, 'info');
+    }
+  }
+
+  // Early theme apply
+  try {
+    const savedTheme = localStorage.getItem('geartrack_theme');
+    if (savedTheme) {
+      document.documentElement.setAttribute('data-theme', savedTheme);
+    }
+  } catch (e) {}
+
   // --- BOOTSTRAP ---
   window.addEventListener('DOMContentLoaded', () => {
+    initTheme();
     initEventListeners();
     initWebSocket();
     loadAllData();
